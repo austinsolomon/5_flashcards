@@ -1,115 +1,76 @@
 /* ============================================================
    Claude Certifications — Exam Prep Review
+   Sequential easiest->hardest pass, per-domain scoring,
+   and a paste-ready weakness prompt on completion.
    ============================================================ */
 'use strict';
 
-const LS_COUNTS = 'cc.correctCounts';
-const LS_STATS  = 'cc.stats';
-const MASTERY   = 2; // correct answers (since last wrong) to master a card
-const OPT_KEYS  = ['A', 'B', 'C', 'D'];
+const LS_RESULTS = 'cc.results';
+const LS_STATS   = 'cc.stats';
+const OPT_KEYS   = ['A', 'B', 'C', 'D'];
+const WEAK_THRESHOLD = 0.8; // domains below 80% are flagged as weak
 const CAT_LABELS = {
   ccaof: 'Associate — Foundations',
   ccdvf: 'Developer — Foundations',
   ccarf: 'Architect — Foundations',
   ccarp: 'Architect — Professional',
 };
-const CAT_SHORT = {
-  ccaof: 'Associate',
-  ccdvf: 'Developer',
-  ccarf: 'Architect (F)',
-  ccarp: 'Architect (P)',
-};
+const CAT_CODE = { ccaof:'CCAO-F', ccdvf:'CCDV-F', ccarf:'CCAR-F', ccarp:'CCAR-P' };
 
 const state = {
   cards: [], byId: {}, byCat: {},
   category: null,
-  direction: 'AB',     // 'AB' prompt a -> pick b ; 'BA' prompt b -> pick a
-  current: null,
-  answered: false,
-  history: [],
+  direction: 'AB',
+  order: [],          // sorted card ids for current category (easiest -> hardest)
+  index: 0,
+  results: {},        // current category: cardId -> {status:'correct'|'wrong'|'revealed', chosen}
   streak: 0, best: 0, correct: 0, total: 0,
-  lastRenderedLevel: null,
+  lastTier: null,
 };
 
 /* ---------- storage ---------- */
-function loadCounts(){ try { return JSON.parse(localStorage.getItem(LS_COUNTS)) || {}; } catch(e){ return {}; } }
-function saveCounts(c){ localStorage.setItem(LS_COUNTS, JSON.stringify(c)); }
-function getCount(id){ return loadCounts()[id] || 0; }
-function setCount(id, n){ const c = loadCounts(); c[id] = n; saveCounts(c); }
+function loadAllResults(){ try { return JSON.parse(localStorage.getItem(LS_RESULTS)) || {}; } catch(e){ return {}; } }
+function saveResults(){ const all = loadAllResults(); all[state.category] = state.results; localStorage.setItem(LS_RESULTS, JSON.stringify(all)); }
 function saveStats(){ localStorage.setItem(LS_STATS, JSON.stringify({ best: state.best, correct: state.correct, total: state.total })); }
-function loadStats(){
-  try { const s = JSON.parse(localStorage.getItem(LS_STATS));
-    if (s){ state.best = s.best||0; state.correct = s.correct||0; state.total = s.total||0; } } catch(e){}
-}
+function loadStats(){ try { const s = JSON.parse(localStorage.getItem(LS_STATS)); if (s){ state.best=s.best||0; state.correct=s.correct||0; state.total=s.total||0; } } catch(e){} }
 
-/* ---------- difficulty / streak (single source of truth) ---------- */
-function targetLevel(streak){ return Math.min(5, Math.floor(streak / 5) + 1); }
-
-/* ---------- pools ---------- */
+/* ---------- helpers ---------- */
 function catCards(cat){ return state.byCat[cat] || []; }
-function activePool(cat){ return catCards(cat).filter(c => getCount(c.id) < MASTERY); }
-function masteredInCat(cat){ return catCards(cat).filter(c => getCount(c.id) >= MASTERY); }
-
-/* ---------- weighted next-card picker ---------- */
-function weightFor(diff, target){
-  const dist = Math.abs(diff - target);
-  if (dist === 0) return 5;
-  if (dist === 1) return 2;
-  return diff < target ? 0.6 : 0.4;
-}
-function pickNextCard(){
-  const cat = state.category;
-  const target = targetLevel(state.streak);
-  let pool = activePool(cat).filter(c => c.id !== state.current);
-  if (pool.length === 0) pool = activePool(cat);
-  if (pool.length === 0) return null;
-  const weights = pool.map(c => {
-    let w = weightFor(c.difficulty, target);
-    if (getCount(c.id) === MASTERY - 1) w *= 1.6;
-    return w;
-  });
-  let r = Math.random() * weights.reduce((a,b)=>a+b, 0);
-  for (let i=0;i<pool.length;i++){ r -= weights[i]; if (r <= 0) return pool[i].id; }
-  return pool[pool.length-1].id;
-}
-
-/* ---------- side helpers ---------- */
+function domainNum(card){ const m = /^Domain (\d+)/.exec(card.domain); return m ? +m[1] : 99; }
 function promptSide(card){ return state.direction === 'AB' ? card.a[0] : card.b[0]; }
 function answerSide(card){ return state.direction === 'AB' ? card.b[0] : card.a[0]; }
+function answeredCount(){ return Object.keys(state.results).length; }
+
+function buildOrder(cat){
+  const arr = catCards(cat).slice().sort((x,y) =>
+    (x.difficulty - y.difficulty) || (domainNum(x) - domainNum(y)));
+  state.order = arr.map(c => c.id);
+}
+
+function shuffle(arr){ for (let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
 
 function buildOptions(card){
   const correctVal = answerSide(card);
-  const others = catCards(card.category)
-    .filter(c => c.id !== card.id)
-    .map(c => answerSide(c))
-    .filter(v => v !== correctVal);
-  const seen = new Set([correctVal]);
-  const uniq = [];
-  for (const v of shuffle(others.slice())){
-    if (!seen.has(v)){ seen.add(v); uniq.push(v); }
-    if (uniq.length === 3) break;
-  }
+  const others = catCards(card.category).filter(c => c.id !== card.id).map(c => answerSide(c)).filter(v => v !== correctVal);
+  const seen = new Set([correctVal]); const uniq = [];
+  for (const v of shuffle(others.slice())){ if (!seen.has(v)){ seen.add(v); uniq.push(v); } if (uniq.length === 3) break; }
   return { opts: shuffle([correctVal, ...uniq]), correctVal };
 }
 
-/* ---------- difficulty / level dots ---------- */
 function setDots(el, n, total){
   el.innerHTML = '';
-  for (let i=0;i<total;i++){
-    const dot = document.createElement('i');
-    if (i < n) dot.className = 'on';
-    el.appendChild(dot);
-  }
+  for (let i=0;i<total;i++){ const d = document.createElement('i'); if (i<n) d.className='on'; el.appendChild(d); }
 }
 
-/* ---------- card rendering ---------- */
+/* ---------- render ---------- */
 function renderCard(id){
   const card = state.byId[id];
   if (!card) return;
-  state.current = id;
-  state.answered = false;
+  state.index = state.order.indexOf(id);
+  const result = state.results[id];
 
-  document.getElementById('cardConcept').textContent = card.concept;
+  document.getElementById('cardConcept').textContent = card.domain;   // section reference
+  document.getElementById('cardTopic').textContent = card.concept.replace(/^.*?—\s*/, '');
   setDots(document.getElementById('cardDiff'), card.difficulty, 5);
   document.getElementById('cardPrompt').textContent = promptSide(card);
 
@@ -128,28 +89,61 @@ function renderCard(id){
     optWrap.appendChild(li);
   });
 
-  const ab = document.getElementById('answerBlock');
-  ab.hidden = true;
+  // answer block content
   document.getElementById('abA').textContent = card.a[0];
   document.getElementById('abB').textContent = card.b[0];
   document.getElementById('abNotes').textContent = card.notes;
   const tagsRow = document.getElementById('tagsRow');
   tagsRow.innerHTML = '';
-  card.tags.forEach(t => {
-    const s = document.createElement('span');
-    s.className = 'tag';
-    s.textContent = t;
-    tagsRow.appendChild(s);
-  });
+  card.tags.filter(t => !/^d\d$/.test(t)).forEach(t => { const s=document.createElement('span'); s.className='tag'; s.textContent=t; tagsRow.appendChild(s); });
 
   document.getElementById('dirBtn').textContent = (state.direction === 'AB') ? 'A→B' : 'B→A';
+
+  if (result){
+    // already answered: re-render locked state
+    [...optWrap.querySelectorAll('.opt')].forEach(b => {
+      b.disabled = true;
+      const text = b.querySelector('.opt-text').textContent;
+      if (text === correctVal) b.classList.add('correct');
+      else if (result.chosen && text === result.chosen) b.classList.add('wrong');
+      else b.classList.add('dim');
+    });
+    document.getElementById('answerBlock').hidden = false;
+  } else {
+    document.getElementById('answerBlock').hidden = true;
+  }
+
+  updateTier(card);
+  renderStats();
+  document.getElementById('prevBtn').disabled = (state.index === 0);
+}
+
+function renderStats(){
+  const cat = state.category, n = catCards(cat).length;
+  document.getElementById('statMastered').textContent = `${answeredCount()}/${n}`;
+  document.getElementById('statStreak').textContent = state.streak;
+  document.getElementById('statBest').textContent = state.best;
+  document.getElementById('statScore').textContent = `${state.correct}/${state.total}`;
+}
+
+function updateTier(card){
+  const tier = card.difficulty;
+  document.getElementById('levelNum').textContent = tier;
+  setDots(document.getElementById('levelBar'), tier, 5);
+  document.getElementById('levelHint').textContent = `Q ${state.index + 1} / ${state.order.length}`;
+  if (state.lastTier !== null && tier !== state.lastTier){
+    const el = document.getElementById('level');
+    el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+    setTimeout(() => el.classList.remove('bump'), 600);
+  }
+  state.lastTier = tier;
 }
 
 /* ---------- answering ---------- */
 function onAnswer(btn, val, correctVal, isReveal){
-  if (state.answered) return;
-  state.answered = true;
-  const card = state.byId[state.current];
+  const id = state.order[state.index];
+  if (state.results[id]) return; // already answered
+  const card = state.byId[id];
 
   [...document.getElementById('options').querySelectorAll('.opt')].forEach(b => {
     b.disabled = true;
@@ -158,110 +152,130 @@ function onAnswer(btn, val, correctVal, isReveal){
     else if (b === btn) b.classList.add('wrong');
     else b.classList.add('dim');
   });
-
   document.getElementById('answerBlock').hidden = false;
-  if (isReveal) return; // no scoring
 
-  state.total++;
-  if (val === correctVal){
-    state.correct++;
-    state.streak++;
-    if (state.streak > state.best) state.best = state.streak;
-    setCount(card.id, Math.min(MASTERY, getCount(card.id) + 1));
-    updateLevel();
-    renderStats(); saveStats();
-    if (activePool(state.category).length === 0) setTimeout(showCategoryComplete, 450);
-  } else {
+  if (isReveal){
+    state.results[id] = { status: 'revealed', chosen: null };
     state.streak = 0;
-    setCount(card.id, 0);
-    demoteRandomMastered(card.category);
-    updateLevel();
-    renderStats(); saveStats();
+  } else {
+    const correct = (val === correctVal);
+    state.total++;
+    if (correct){ state.correct++; state.streak++; if (state.streak > state.best) state.best = state.streak; }
+    else { state.streak = 0; }
+    state.results[id] = { status: correct ? 'correct' : 'wrong', chosen: val };
   }
-}
-
-function demoteRandomMastered(cat){
-  const mastered = masteredInCat(cat);
-  if (mastered.length === 0) return;
-  setCount(mastered[Math.floor(Math.random() * mastered.length)].id, 0);
+  saveResults(); saveStats(); renderStats();
+  if (answeredCount() === catCards(state.category).length) setTimeout(showResults, 500);
 }
 
 function revealCurrent(){
-  if (state.answered) return;
-  const correctVal = answerSide(state.byId[state.current]);
+  const id = state.order[state.index];
+  if (state.results[id]) return;
+  const correctVal = answerSide(state.byId[id]);
   onAnswer(null, correctVal, correctVal, true);
 }
 
-/* ---------- stats + level ---------- */
-function renderStats(){
-  const cat = state.category;
-  document.getElementById('statMastered').textContent =
-    `${masteredInCat(cat).length}/${catCards(cat).length}`;
-  document.getElementById('statStreak').textContent = state.streak;
-  document.getElementById('statBest').textContent = state.best;
-  document.getElementById('statScore').textContent = `${state.correct}/${state.total}`;
-}
-
-function updateLevel(){
-  const streak = state.streak;
-  const level = targetLevel(streak);
-  const within = streak % 5;
-  document.getElementById('levelNum').textContent = level;
-  setDots(document.getElementById('levelBar'), level, 5);
-  document.getElementById('levelHint').textContent =
-    (level === 5) ? 'max level' : `+${5 - within} → L${level + 1}`;
-
-  if (state.lastRenderedLevel !== null && level !== state.lastRenderedLevel){
-    const el = document.getElementById('level');
-    el.classList.remove('bump');
-    void el.offsetWidth;
-    el.classList.add('bump');
-    setTimeout(() => el.classList.remove('bump'), 600);
-  }
-  state.lastRenderedLevel = level;
-}
-
-/* ---------- category complete ---------- */
-function showCategoryComplete(){
-  const cat = state.category;
-  document.getElementById('completeSub').textContent =
-    `You have mastered all ${catCards(cat).length} ${CAT_SHORT[cat]} cards.`;
-  document.getElementById('completeOverlay').hidden = false;
-}
-function restartCategory(){
-  const cat = state.category;
-  const counts = loadCounts();
-  catCards(cat).forEach(c => { counts[c.id] = 0; });
-  saveCounts(counts);
-  closeOverlay();
-  renderStats();
-  const next = pickNextCard();
-  if (next) renderCard(next);
-}
-function closeOverlay(){ document.getElementById('completeOverlay').hidden = true; }
-
 /* ---------- navigation ---------- */
 function goNext(){
-  if (activePool(state.category).length === 0){ showCategoryComplete(); return; }
-  if (state.current) state.history.push(state.current);
-  const next = pickNextCard();
-  if (next) renderCard(next);
+  if (state.index < state.order.length - 1){ renderCard(state.order[state.index + 1]); }
+  else { showResults(); }
 }
-function goPrev(){
-  if (state.history.length === 0) return;
-  renderCard(state.history.pop());
+function goPrev(){ if (state.index > 0) renderCard(state.order[state.index - 1]); }
+function toggleDirection(){ state.direction = (state.direction === 'AB') ? 'BA' : 'AB'; renderCard(state.order[state.index]); }
+function jumpNextUnanswered(){
+  for (let k=1;k<=state.order.length;k++){
+    const idx = (state.index + k) % state.order.length;
+    if (!state.results[state.order[idx]]){ renderCard(state.order[idx]); return; }
+  }
+  showResults(); // none left
 }
-function goShuffle(){
-  const pool = activePool(state.category).filter(c => c.id !== state.current);
-  const src = pool.length ? pool : activePool(state.category);
-  if (src.length === 0){ showCategoryComplete(); return; }
-  if (state.current) state.history.push(state.current);
-  renderCard(src[Math.floor(Math.random()*src.length)].id);
+
+/* ---------- results & weakness prompt ---------- */
+function domainStats(){
+  const cat = state.category;
+  const map = {}; // domain -> {correct, total}
+  catCards(cat).forEach(card => {
+    const d = card.domain;
+    if (!map[d]) map[d] = { correct:0, total:0, missed:[] };
+    map[d].total++;
+    const r = state.results[card.id];
+    if (r && r.status === 'correct') map[d].correct++;
+    else if (r) map[d].missed.push(card.concept.replace(/^.*?—\s*/, ''));
+    else map[d].missed.push(card.concept.replace(/^.*?—\s*/, '')); // unanswered = missed
+  });
+  return map;
 }
-function toggleDirection(){
-  state.direction = (state.direction === 'AB') ? 'BA' : 'AB';
-  if (state.current) renderCard(state.current);
+
+function buildWeakPrompt(map){
+  const cat = state.category;
+  const rows = Object.entries(map).sort((a,b)=>domNum(a[0])-domNum(b[0]));
+  const weak = rows.filter(([d,s]) => (s.correct / s.total) < WEAK_THRESHOLD);
+  const target = weak.length ? weak : rows.slice().sort((a,b)=>(a[1].correct/a[1].total)-(b[1].correct/b[1].total)).slice(0,2);
+  const lines = [];
+  lines.push(`Add more Claude Certifications practice questions to the claude_certs deck.`);
+  lines.push('');
+  lines.push(`I just finished the "${CAT_LABELS[cat]}" (${CAT_CODE[cat]}) category and want to reinforce my weak sections.`);
+  lines.push('');
+  lines.push('My section scores:');
+  rows.forEach(([d,s]) => lines.push(`- ${d}: ${s.correct}/${s.total} (${Math.round(100*s.correct/s.total)}%)`));
+  lines.push('');
+  lines.push('Focus the new questions on these weaker sections and the specific topics I missed:');
+  target.forEach(([d,s]) => {
+    const miss = s.missed.slice(0,6).join('; ');
+    lines.push(`- ${d}${miss ? ` — missed: ${miss}` : ''}`);
+  });
+  lines.push('');
+  lines.push(`Please generate 15 new exam-style multiple-choice questions concentrated on the sections above for the "${cat}" category, following the existing card schema (id, category "${cat}", difficulty 1-5, domain, concept, a, b, notes, tags), each labeled with its exam domain, ordered easiest to hardest, with answers distinct within the category. Add them to claude_certs/cards.json, then commit and deploy.`);
+  return lines.join('\n');
 }
+function domNum(d){ const m=/^Domain (\d+)/.exec(d); return m?+m[1]:99; }
+
+function showResults(){
+  const cat = state.category;
+  const map = domainStats();
+  const totalCorrect = Object.values(map).reduce((a,s)=>a+s.correct,0);
+  const totalQ = Object.values(map).reduce((a,s)=>a+s.total,0);
+  const pct = Math.round(100*totalCorrect/totalQ);
+
+  document.getElementById('resultTitle').textContent = `${CAT_LABELS[cat]} — Results`;
+  document.getElementById('resultOverall').textContent =
+    `Overall: ${totalCorrect}/${totalQ} (${pct}%)${answeredCount() < totalQ ? ' · some questions unanswered (counted as missed)' : ''}`;
+
+  const rowsEl = document.getElementById('resultRows');
+  rowsEl.innerHTML = '';
+  Object.entries(map).sort((a,b)=>domNum(a[0])-domNum(b[0])).forEach(([d,s]) => {
+    const p = Math.round(100*s.correct/s.total);
+    const weak = (s.correct/s.total) < WEAK_THRESHOLD;
+    const row = document.createElement('div');
+    row.className = 'res-row' + (weak ? ' weak' : '');
+    row.innerHTML =
+      `<span class="res-dom"></span>` +
+      `<span class="res-bar"><i style="width:${p}%"></i></span>` +
+      `<span class="res-score">${s.correct}/${s.total} · ${p}%</span>`;
+    row.querySelector('.res-dom').textContent = d;
+    rowsEl.appendChild(row);
+  });
+
+  document.getElementById('weakPrompt').value = buildWeakPrompt(map);
+  document.getElementById('completeOverlay').hidden = false;
+}
+
+function copyPrompt(){
+  const ta = document.getElementById('weakPrompt');
+  ta.select();
+  const done = () => { const b = document.getElementById('copyPromptBtn'); b.textContent = 'Copied'; setTimeout(()=>b.textContent='Copy', 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(done, () => { document.execCommand('copy'); done(); });
+  else { document.execCommand('copy'); done(); }
+}
+
+function restartCategory(){
+  state.results = {};
+  saveResults();
+  state.index = 0;
+  closeOverlay();
+  renderCard(state.order[0]);
+}
+function closeOverlay(){ document.getElementById('completeOverlay').hidden = true; }
 
 /* ---------- category ---------- */
 function buildCategorySelect(){
@@ -279,42 +293,36 @@ function buildCategorySelect(){
 }
 function switchCategory(cat){
   state.category = cat;
-  state.current = null;
-  state.history = [];
+  state.results = loadAllResults()[cat] || {};
+  state.lastTier = null;
   document.getElementById('catSelect').value = cat;
-  renderStats();
-  if (activePool(cat).length === 0){ showCategoryComplete(); return; }
-  const next = pickNextCard();
-  if (next) renderCard(next);
+  buildOrder(cat);
+  // resume at first unanswered, else start at 0
+  let start = state.order.findIndex(id => !state.results[id]);
+  if (start < 0) start = 0;
+  renderCard(state.order[start]);
 }
 
 /* ---------- reset ---------- */
-function resetStats(){
-  saveCounts({});
-  state.streak = 0; state.best = 0; state.correct = 0; state.total = 0;
-  state.lastRenderedLevel = null;
+function resetAll(){
+  localStorage.removeItem(LS_RESULTS);
+  state.results = {}; state.streak = 0; state.best = 0; state.correct = 0; state.total = 0; state.lastTier = null;
   saveStats();
-  renderStats();
-  updateLevel();
   switchCategory(state.category);
-}
-
-/* ---------- util ---------- */
-function shuffle(arr){
-  for (let i=arr.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
-  return arr;
 }
 
 /* ---------- controls ---------- */
 function wireControls(){
   document.getElementById('prevBtn').addEventListener('click', goPrev);
   document.getElementById('nextBtn').addEventListener('click', goNext);
-  document.getElementById('shuffleBtn').addEventListener('click', goShuffle);
+  document.getElementById('shuffleBtn').addEventListener('click', jumpNextUnanswered);
   document.getElementById('revealBtn').addEventListener('click', revealCurrent);
   document.getElementById('dirBtn').addEventListener('click', toggleDirection);
-  document.getElementById('resetBtn').addEventListener('click', resetStats);
+  document.getElementById('resetBtn').addEventListener('click', resetAll);
   document.getElementById('restartCatBtn').addEventListener('click', restartCategory);
   document.getElementById('closeOverlayBtn').addEventListener('click', closeOverlay);
+  document.getElementById('copyPromptBtn').addEventListener('click', copyPrompt);
+  document.getElementById('resultsBtn').addEventListener('click', showResults);
 }
 
 /* ---------- boot ---------- */
@@ -325,20 +333,14 @@ async function boot(){
     const res = await fetch('cards.json', { cache: 'no-cache' });
     const cards = await res.json();
     state.cards = cards;
-    cards.forEach(c => {
-      state.byId[c.id] = c;
-      (state.byCat[c.category] = state.byCat[c.category] || []).push(c);
-    });
+    cards.forEach(c => { state.byId[c.id] = c; (state.byCat[c.category] = state.byCat[c.category] || []).push(c); });
   } catch(e){
     document.getElementById('cardPrompt').textContent = 'Failed to load deck: ' + e.message;
     return;
   }
   state.category = Object.keys(CAT_LABELS).find(c => state.byCat[c]) || Object.keys(state.byCat)[0];
   buildCategorySelect();
-  renderStats();
-  updateLevel();
-  const first = pickNextCard();
-  if (first) renderCard(first); else showCategoryComplete();
+  switchCategory(state.category);
 }
 
 if ('serviceWorker' in navigator){
