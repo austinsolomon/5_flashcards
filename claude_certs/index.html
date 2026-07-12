@@ -49,12 +49,17 @@
         <span class="concept" id="cardConcept">&mdash;</span>
         <span class="card-diff" id="cardDiff" title="Card difficulty" aria-label="Card difficulty"></span>
       </div>
-      <div class="card-topic" id="cardTopic">&mdash;</div>
+      <div class="card-topic-row">
+        <span class="card-topic" id="cardTopic">&mdash;</span>
+        <span class="mastery-badge" id="masteryBadge" hidden>MASTERY</span>
+      </div>
       <h1 class="question" id="cardPrompt">&mdash;</h1>
       <ol class="options" id="options"></ol>
+      <div class="interact" id="interact" hidden></div>
       <section class="answer" id="answerBlock" hidden>
         <div class="ans-line"><span class="ans-key">Prompt</span><span id="abA">&mdash;</span></div>
         <div class="ans-line"><span class="ans-key">Answer</span><span id="abB">&mdash;</span></div>
+        <ul class="rubric" id="abRubric" hidden></ul>
         <p class="ans-note" id="abNotes">&mdash;</p>
         <div class="ans-tags" id="tagsRow"></div>
       </section>
