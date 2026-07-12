@@ -25,19 +25,20 @@
     </label>
   </header>
 
-  <!-- STATUS STRIP: stats + adaptive level (compact) -->
+  <!-- STATUS STRIP: progress + current tier (compact) -->
   <div class="statusbar">
     <div class="stats" id="stats">
-      <span class="stat"><b id="statMastered">0</b><span>mastered</span></span>
+      <span class="stat"><b id="statMastered">0/0</b><span>answered</span></span>
       <span class="stat"><b id="statStreak">0</b><span>streak</span></span>
       <span class="stat"><b id="statBest">0</b><span>best</span></span>
       <span class="stat"><b id="statScore">0/0</b><span>correct</span></span>
     </div>
-    <div class="level" id="level" title="Adaptive difficulty">
-      <span class="level-label">Level <b id="levelNum">1</b></span>
+    <div class="level" id="level" title="Current question difficulty tier">
+      <span class="level-label">Tier <b id="levelNum">1</b></span>
       <span class="level-bar" id="levelBar" aria-hidden="true"></span>
-      <span class="level-hint" id="levelHint">+5 &rarr; L2</span>
+      <span class="level-hint" id="levelHint">Q 1 / 50</span>
     </div>
+    <button class="link-btn" id="resultsBtn" type="button">Score</button>
     <button class="link-btn" id="resetBtn" type="button">Reset</button>
   </div>
 
@@ -48,6 +49,7 @@
         <span class="concept" id="cardConcept">&mdash;</span>
         <span class="card-diff" id="cardDiff" title="Card difficulty" aria-label="Card difficulty"></span>
       </div>
+      <div class="card-topic" id="cardTopic">&mdash;</div>
       <h1 class="question" id="cardPrompt">&mdash;</h1>
       <ol class="options" id="options"></ol>
       <section class="answer" id="answerBlock" hidden>
@@ -64,15 +66,23 @@
     <button class="nav-btn" id="prevBtn" type="button" aria-label="Previous">Prev</button>
     <button class="nav-btn" id="revealBtn" type="button">Reveal</button>
     <button class="nav-btn" id="dirBtn" type="button" aria-label="Toggle direction">A&rarr;B</button>
-    <button class="nav-btn" id="shuffleBtn" type="button">Shuffle</button>
+    <button class="nav-btn" id="shuffleBtn" type="button" title="Jump to next unanswered">Jump</button>
     <button class="nav-btn primary" id="nextBtn" type="button">Next</button>
   </nav>
 
-  <!-- CATEGORY COMPLETE -->
+  <!-- CATEGORY RESULTS -->
   <div class="overlay" id="completeOverlay" hidden>
-    <div class="overlay-card">
-      <h2 class="overlay-title">Category complete</h2>
-      <p class="overlay-text" id="completeSub">You have mastered every card in this category.</p>
+    <div class="overlay-card results-card">
+      <h2 class="overlay-title" id="resultTitle">Results</h2>
+      <p class="overlay-text" id="resultOverall">&mdash;</p>
+      <div class="results" id="resultRows"></div>
+      <div class="prompt-box">
+        <div class="prompt-head">
+          <span>Prompt to generate questions for your weak areas</span>
+          <button class="copy-btn" id="copyPromptBtn" type="button">Copy</button>
+        </div>
+        <textarea class="prompt-text" id="weakPrompt" readonly rows="6" spellcheck="false"></textarea>
+      </div>
       <div class="overlay-actions">
         <button class="overlay-btn primary" id="restartCatBtn" type="button">Restart category</button>
         <button class="overlay-btn" id="closeOverlayBtn" type="button">Close</button>

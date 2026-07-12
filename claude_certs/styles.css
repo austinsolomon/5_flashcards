@@ -205,3 +205,47 @@ body{
 @media(min-height:780px){
   .question{font-size:20px;}
 }
+
+/* ============================================================
+   Certs-specific: section label, topic, results, weak-area prompt
+   ============================================================ */
+/* the concept slot now carries the exam-domain (section) label */
+.concept{
+  text-transform:none;letter-spacing:.2px;font-size:11px;font-weight:600;
+  line-height:1.3;white-space:normal;
+}
+.card-topic{
+  font-size:12px;font-weight:500;color:var(--muted);letter-spacing:.2px;
+  margin:2px 0 2px;
+}
+.level{cursor:default;}
+
+/* results overlay */
+.results-card{max-width:440px;width:100%;max-height:88dvh;overflow-y:auto;text-align:left;}
+.results-card .overlay-title{text-align:left;font-size:19px;}
+.results-card .overlay-text{text-align:left;margin-bottom:14px;}
+.results{display:flex;flex-direction:column;gap:9px;margin-bottom:16px;}
+.res-row{display:grid;grid-template-columns:1fr auto;grid-template-areas:"dom score" "bar bar";gap:4px 10px;align-items:center;}
+.res-dom{grid-area:dom;font-size:12px;font-weight:500;color:var(--ink);line-height:1.25;}
+.res-score{grid-area:score;font-family:var(--serif);font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap;}
+.res-bar{grid-area:bar;height:6px;border-radius:3px;background:var(--surface-2);border:1px solid var(--line);overflow:hidden;}
+.res-bar i{display:block;height:100%;background:var(--correct);}
+.res-row.weak .res-bar i{background:var(--wrong);}
+.res-row.weak .res-score{color:var(--wrong);}
+
+/* weak-area prompt box */
+.prompt-box{border:1px solid var(--line-strong);border-radius:var(--radius);overflow:hidden;margin-bottom:16px;}
+.prompt-head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  background:var(--surface-2);padding:7px 10px;font-size:11px;font-weight:600;color:var(--muted);
+  border-bottom:1px solid var(--line);
+}
+.copy-btn{
+  font-family:var(--sans);font-size:11px;font-weight:600;color:var(--on-accent);background:var(--accent);
+  border:none;border-radius:6px;padding:4px 12px;cursor:pointer;letter-spacing:.3px;
+}
+.copy-btn:hover{background:var(--accent-soft);}
+.prompt-text{
+  width:100%;border:none;resize:vertical;padding:10px;font-family:var(--sans);font-size:11.5px;
+  line-height:1.45;color:var(--ink-soft);background:var(--surface);outline:none;display:block;
+}
