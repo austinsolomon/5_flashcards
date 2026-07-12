@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1c2027" />
+  <meta name="description" content="Exam-prep multiple-choice review for the Claude certifications: Associate, Developer, and Architect." />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>Claude Certifications — Exam Prep</title>
+</head>
+<body>
+  <!-- HEADER -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-name">Claude Certs</span>
+      <span class="brand-sub">Exam Prep Review</span>
+    </div>
+    <label class="cat-select-wrap" aria-label="Category">
+      <select id="catSelect" class="cat-select"></select>
+    </label>
+  </header>
+
+  <!-- STATUS STRIP: stats + adaptive level (compact) -->
+  <div class="statusbar">
+    <div class="stats" id="stats">
+      <span class="stat"><b id="statMastered">0</b><span>mastered</span></span>
+      <span class="stat"><b id="statStreak">0</b><span>streak</span></span>
+      <span class="stat"><b id="statBest">0</b><span>best</span></span>
+      <span class="stat"><b id="statScore">0/0</b><span>correct</span></span>
+    </div>
+    <div class="level" id="level" title="Adaptive difficulty">
+      <span class="level-label">Level <b id="levelNum">1</b></span>
+      <span class="level-bar" id="levelBar" aria-hidden="true"></span>
+      <span class="level-hint" id="levelHint">+5 &rarr; L2</span>
+    </div>
+    <button class="link-btn" id="resetBtn" type="button">Reset</button>
+  </div>
+
+  <!-- CARD STAGE (~80% of viewport) -->
+  <main class="stage">
+    <article class="card" id="card">
+      <div class="card-meta">
+        <span class="concept" id="cardConcept">&mdash;</span>
+        <span class="card-diff" id="cardDiff" title="Card difficulty" aria-label="Card difficulty"></span>
+      </div>
+      <h1 class="question" id="cardPrompt">&mdash;</h1>
+      <ol class="options" id="options"></ol>
+      <section class="answer" id="answerBlock" hidden>
+        <div class="ans-line"><span class="ans-key">Prompt</span><span id="abA">&mdash;</span></div>
+        <div class="ans-line"><span class="ans-key">Answer</span><span id="abB">&mdash;</span></div>
+        <p class="ans-note" id="abNotes">&mdash;</p>
+        <div class="ans-tags" id="tagsRow"></div>
+      </section>
+    </article>
+  </main>
+
+  <!-- BOTTOM NAV -->
+  <nav class="navbar">
+    <button class="nav-btn" id="prevBtn" type="button" aria-label="Previous">Prev</button>
+    <button class="nav-btn" id="revealBtn" type="button">Reveal</button>
+    <button class="nav-btn" id="dirBtn" type="button" aria-label="Toggle direction">A&rarr;B</button>
+    <button class="nav-btn" id="shuffleBtn" type="button">Shuffle</button>
+    <button class="nav-btn primary" id="nextBtn" type="button">Next</button>
+  </nav>
+
+  <!-- CATEGORY COMPLETE -->
+  <div class="overlay" id="completeOverlay" hidden>
+    <div class="overlay-card">
+      <h2 class="overlay-title">Category complete</h2>
+      <p class="overlay-text" id="completeSub">You have mastered every card in this category.</p>
+      <div class="overlay-actions">
+        <button class="overlay-btn primary" id="restartCatBtn" type="button">Restart category</button>
+        <button class="overlay-btn" id="closeOverlayBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
