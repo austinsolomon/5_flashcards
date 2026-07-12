@@ -26,7 +26,9 @@ const state = {
   results: {},        // current category: cardId -> {status:'correct'|'wrong'|'revealed', chosen}
   streak: 0, best: 0, correct: 0, total: 0,
   lastTier: null,
+  advanceTimer: null,
 };
+const ADVANCE_MS = 3000; // correct-answer explanation shown, then auto-advance
 
 /* ---------- storage ---------- */
 function loadAllResults(){ try { return JSON.parse(localStorage.getItem(LS_RESULTS)) || {}; } catch(e){ return {}; } }
@@ -66,6 +68,7 @@ function setDots(el, n, total){
 function renderCard(id){
   const card = state.byId[id];
   if (!card) return;
+  clearAdvance();
   state.index = state.order.indexOf(id);
   const result = state.results[id];
 
@@ -165,8 +168,41 @@ function onAnswer(btn, val, correctVal, isReveal){
     state.results[id] = { status: correct ? 'correct' : 'wrong', chosen: val };
   }
   saveResults(); saveStats(); renderStats();
-  if (answeredCount() === catCards(state.category).length) setTimeout(showResults, 500);
+
+  const complete = answeredCount() === catCards(state.category).length;
+  if (!isReveal && val === correctVal){
+    // correct: show the explanation, then auto-advance after 3s
+    scheduleAdvance(
+      complete ? showResults : goNext,
+      ADVANCE_MS,
+      complete ? 'Correct — showing results…' : 'Correct — next question…'
+    );
+  }
+  // wrong or revealed answers stay on screen for review (manual Next / Score)
 }
+
+/* ---------- auto-advance ---------- */
+function scheduleAdvance(fn, ms, bannerText){
+  clearAdvance();
+  if (bannerText) showAutoAdvance(bannerText, ms);
+  state.advanceTimer = setTimeout(() => { state.advanceTimer = null; hideAutoAdvance(); fn(); }, ms);
+}
+function clearAdvance(){
+  if (state.advanceTimer){ clearTimeout(state.advanceTimer); state.advanceTimer = null; }
+  hideAutoAdvance();
+}
+function showAutoAdvance(text, ms){
+  const banner = document.getElementById('autoAdvance');
+  document.getElementById('autoAdvanceText').textContent = text;
+  banner.hidden = false;
+  const bar = document.querySelector('#autoAdvanceBar i');
+  bar.style.transition = 'none';
+  bar.style.width = '100%';
+  void bar.offsetWidth;                     // reflow so the animation restarts
+  bar.style.transition = `width ${ms}ms linear`;
+  bar.style.width = '0%';
+}
+function hideAutoAdvance(){ document.getElementById('autoAdvance').hidden = true; }
 
 function revealCurrent(){
   const id = state.order[state.index];
@@ -231,6 +267,7 @@ function buildWeakPrompt(map){
 function domNum(d){ const m=/^Domain (\d+)/.exec(d); return m?+m[1]:99; }
 
 function showResults(){
+  clearAdvance();
   const cat = state.category;
   const map = domainStats();
   const totalCorrect = Object.values(map).reduce((a,s)=>a+s.correct,0);
@@ -323,6 +360,7 @@ function wireControls(){
   document.getElementById('closeOverlayBtn').addEventListener('click', closeOverlay);
   document.getElementById('copyPromptBtn').addEventListener('click', copyPrompt);
   document.getElementById('resultsBtn').addEventListener('click', showResults);
+  document.getElementById('stayBtn').addEventListener('click', clearAdvance);
 }
 
 /* ---------- boot ---------- */
