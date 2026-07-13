@@ -1,14 +1,15 @@
 /* ============================================================
    Claude Certifications — Exam Prep Review
-   Sequential easiest->hardest pass, per-domain scoring,
-   and a paste-ready weakness prompt on completion.
+   MC pass (easiest -> hardest) + Mastery items (cloze, ordering,
+   matching, scenario), per-domain scoring, weakness prompt.
    ============================================================ */
 'use strict';
 
 const LS_RESULTS = 'cc.results';
 const LS_STATS   = 'cc.stats';
 const OPT_KEYS   = ['A', 'B', 'C', 'D'];
-const WEAK_THRESHOLD = 0.8; // domains below 80% are flagged as weak
+const WEAK_THRESHOLD = 0.8;
+const ADVANCE_MS = 3000;
 const CAT_LABELS = {
   ccaof: 'Associate — Foundations',
   ccdvf: 'Developer — Foundations',
@@ -16,19 +17,19 @@ const CAT_LABELS = {
   ccarp: 'Architect — Professional',
 };
 const CAT_CODE = { ccaof:'CCAO-F', ccdvf:'CCDV-F', ccarf:'CCAR-F', ccarp:'CCAR-P' };
+const TYPE_LABELS = { cloze:'Recall', order:'Sequence', match:'Matching', scenario:'Scenario' };
 
 const state = {
   cards: [], byId: {}, byCat: {},
   category: null,
   direction: 'AB',
-  order: [],          // sorted card ids for current category (easiest -> hardest)
-  index: 0,
-  results: {},        // current category: cardId -> {status:'correct'|'wrong'|'revealed', chosen}
+  order: [], index: 0,
+  results: {},
   streak: 0, best: 0, correct: 0, total: 0,
   lastTier: null,
   advanceTimer: null,
+  ui: {},            // per-card transient UI state (order picks, match pairs)
 };
-const ADVANCE_MS = 3000; // correct-answer explanation shown, then auto-advance
 
 /* ---------- storage ---------- */
 function loadAllResults(){ try { return JSON.parse(localStorage.getItem(LS_RESULTS)) || {}; } catch(e){ return {}; } }
@@ -38,13 +39,17 @@ function loadStats(){ try { const s = JSON.parse(localStorage.getItem(LS_STATS))
 
 /* ---------- helpers ---------- */
 function catCards(cat){ return state.byCat[cat] || []; }
+function cardType(card){ return card.type || 'mc'; }
+function isMastery(card){ return cardType(card) !== 'mc'; }
 function domainNum(card){ const m = /^Domain (\d+)/.exec(card.domain); return m ? +m[1] : 99; }
 function promptSide(card){ return state.direction === 'AB' ? card.a[0] : card.b[0]; }
 function answerSide(card){ return state.direction === 'AB' ? card.b[0] : card.a[0]; }
 function answeredCount(){ return Object.keys(state.results).length; }
+function currentCard(){ return state.byId[state.order[state.index]]; }
 
 function buildOrder(cat){
   const arr = catCards(cat).slice().sort((x,y) =>
+    ((isMastery(x)?1:0) - (isMastery(y)?1:0)) ||
     (x.difficulty - y.difficulty) || (domainNum(x) - domainNum(y)));
   state.order = arr.map(c => c.id);
 }
@@ -53,7 +58,11 @@ function shuffle(arr){ for (let i=arr.length-1;i>0;i--){ const j=Math.floor(Math
 
 function buildOptions(card){
   const correctVal = answerSide(card);
-  const others = catCards(card.category).filter(c => c.id !== card.id).map(c => answerSide(c)).filter(v => v !== correctVal);
+  // hand-authored distractors (A->B direction only, where the answer side matches them)
+  if (state.direction === 'AB' && Array.isArray(card.distractors) && card.distractors.length >= 3){
+    return { opts: shuffle([correctVal, ...card.distractors.slice(0,3)]), correctVal };
+  }
+  const others = catCards(card.category).filter(c => c.id !== card.id && !isMastery(c)).map(c => answerSide(c)).filter(v => v !== correctVal);
   const seen = new Set([correctVal]); const uniq = [];
   for (const v of shuffle(others.slice())){ if (!seen.has(v)){ seen.add(v); uniq.push(v); } if (uniq.length === 3) break; }
   return { opts: shuffle([correctVal, ...uniq]), correctVal };
@@ -63,6 +72,8 @@ function setDots(el, n, total){
   el.innerHTML = '';
   for (let i=0;i<total;i++){ const d = document.createElement('i'); if (i<n) d.className='on'; el.appendChild(d); }
 }
+function el(tag, cls, text){ const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+function normalize(s){ return String(s).toLowerCase().replace(/[^a-z0-9]+/g,''); }
 
 /* ---------- render ---------- */
 function renderCard(id){
@@ -70,50 +81,48 @@ function renderCard(id){
   if (!card) return;
   clearAdvance();
   state.index = state.order.indexOf(id);
+  state.ui = {};
   const result = state.results[id];
+  const type = cardType(card);
 
-  document.getElementById('cardConcept').textContent = card.domain;   // section reference
+  // meta
+  document.getElementById('cardConcept').textContent = card.domain;
   document.getElementById('cardTopic').textContent = card.concept.replace(/^.*?—\s*/, '');
   setDots(document.getElementById('cardDiff'), card.difficulty, 5);
-  document.getElementById('cardPrompt').textContent = promptSide(card);
+  const badge = document.getElementById('masteryBadge');
+  badge.hidden = !isMastery(card);
+  if (isMastery(card)) badge.textContent = 'MASTERY · ' + (TYPE_LABELS[type] || type).toUpperCase();
 
-  const { opts, correctVal } = buildOptions(card);
-  const optWrap = document.getElementById('options');
-  optWrap.innerHTML = '';
-  opts.forEach((val, i) => {
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.className = 'opt';
-    b.type = 'button';
-    b.innerHTML = `<span class="opt-key">${OPT_KEYS[i]}</span><span class="opt-text"></span>`;
-    b.querySelector('.opt-text').textContent = val;
-    b.addEventListener('click', () => onAnswer(b, val, correctVal, false));
-    li.appendChild(b);
-    optWrap.appendChild(li);
-  });
+  document.getElementById('cardPrompt').textContent = isMastery(card) ? card.a[0] : promptSide(card);
 
   // answer block content
   document.getElementById('abA').textContent = card.a[0];
-  document.getElementById('abB').textContent = card.b[0];
+  document.getElementById('abB').textContent = answerBlockText(card);
   document.getElementById('abNotes').textContent = card.notes;
+  renderRubric(card);
   const tagsRow = document.getElementById('tagsRow');
   tagsRow.innerHTML = '';
-  card.tags.filter(t => !/^d\d$/.test(t)).forEach(t => { const s=document.createElement('span'); s.className='tag'; s.textContent=t; tagsRow.appendChild(s); });
+  card.tags.filter(t => !/^d\d$/.test(t)).forEach(t => tagsRow.appendChild(el('span','tag',t)));
 
   document.getElementById('dirBtn').textContent = (state.direction === 'AB') ? 'A→B' : 'B→A';
+  document.getElementById('dirBtn').disabled = isMastery(card);
+
+  // interaction area
+  const optWrap = document.getElementById('options');
+  const interact = document.getElementById('interact');
+  optWrap.innerHTML = ''; interact.innerHTML = '';
+  optWrap.hidden = (type !== 'mc');
+  interact.hidden = (type === 'mc');
 
   if (result){
-    // already answered: re-render locked state
-    [...optWrap.querySelectorAll('.opt')].forEach(b => {
-      b.disabled = true;
-      const text = b.querySelector('.opt-text').textContent;
-      if (text === correctVal) b.classList.add('correct');
-      else if (result.chosen && text === result.chosen) b.classList.add('wrong');
-      else b.classList.add('dim');
-    });
-    document.getElementById('answerBlock').hidden = false;
+    renderAnsweredState(card, result);
   } else {
     document.getElementById('answerBlock').hidden = true;
+    if (type === 'mc') renderMC(card);
+    else if (type === 'cloze') renderCloze(card);
+    else if (type === 'order') renderOrderType(card);
+    else if (type === 'match') renderMatch(card);
+    else if (type === 'scenario') renderScenario(card);
   }
 
   updateTier(card);
@@ -121,64 +130,253 @@ function renderCard(id){
   document.getElementById('prevBtn').disabled = (state.index === 0);
 }
 
-function renderStats(){
-  const cat = state.category, n = catCards(cat).length;
-  document.getElementById('statMastered').textContent = `${answeredCount()}/${n}`;
-  document.getElementById('statStreak').textContent = state.streak;
-  document.getElementById('statBest').textContent = state.best;
-  document.getElementById('statScore').textContent = `${state.correct}/${state.total}`;
+function answerBlockText(card){
+  const type = cardType(card);
+  if (type === 'order') return card.items.map((s,i)=>`${i+1}. ${s}`).join('  ');
+  if (type === 'match') return card.pairs.map(p=>`${p[0]} → ${p[1]}`).join('  ·  ');
+  return card.b[0];
 }
-
-function updateTier(card){
-  const tier = card.difficulty;
-  document.getElementById('levelNum').textContent = tier;
-  setDots(document.getElementById('levelBar'), tier, 5);
-  document.getElementById('levelHint').textContent = `Q ${state.index + 1} / ${state.order.length}`;
-  if (state.lastTier !== null && tier !== state.lastTier){
-    const el = document.getElementById('level');
-    el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
-    setTimeout(() => el.classList.remove('bump'), 600);
+function renderRubric(card){
+  const r = document.getElementById('abRubric');
+  r.innerHTML = ''; r.hidden = true;
+  if (cardType(card) === 'scenario' && Array.isArray(card.rubric)){
+    card.rubric.forEach(p => r.appendChild(el('li','',p)));
+    r.hidden = false;
   }
-  state.lastTier = tier;
 }
 
-/* ---------- answering ---------- */
-function onAnswer(btn, val, correctVal, isReveal){
-  const id = state.order[state.index];
-  if (state.results[id]) return; // already answered
-  const card = state.byId[id];
-
-  [...document.getElementById('options').querySelectorAll('.opt')].forEach(b => {
-    b.disabled = true;
-    const text = b.querySelector('.opt-text').textContent;
-    if (text === correctVal) b.classList.add('correct');
-    else if (b === btn) b.classList.add('wrong');
-    else b.classList.add('dim');
-  });
-  document.getElementById('answerBlock').hidden = false;
-
-  if (isReveal){
-    state.results[id] = { status: 'revealed', chosen: null };
-    state.streak = 0;
+function renderAnsweredState(card, result){
+  const s = result.status;
+  const msg = s === 'correct' ? 'Answered — correct' : s === 'revealed' ? 'Revealed — not scored' : 'Answered — missed';
+  const note = el('div', 'answered-note ' + (s === 'correct' ? 'good' : 'bad'), msg);
+  if (cardType(card) === 'mc'){
+    const optWrap = document.getElementById('options');
+    const { opts, correctVal } = buildOptions(card);
+    // deterministic re-render: show correct + chosen
+    opts.forEach((val, i) => {
+      const li = document.createElement('li');
+      const b = mcOptionButton(val, i);
+      b.disabled = true;
+      if (val === correctVal) b.classList.add('correct');
+      else if (result.chosen && val === result.chosen) b.classList.add('wrong');
+      else b.classList.add('dim');
+      li.appendChild(b);
+      optWrap.appendChild(li);
+    });
   } else {
-    const correct = (val === correctVal);
-    state.total++;
-    if (correct){ state.correct++; state.streak++; if (state.streak > state.best) state.best = state.streak; }
-    else { state.streak = 0; }
-    state.results[id] = { status: correct ? 'correct' : 'wrong', chosen: val };
+    document.getElementById('interact').appendChild(note);
   }
-  saveResults(); saveStats(); renderStats();
+  document.getElementById('answerBlock').hidden = false;
+}
 
+/* ---------- MC ---------- */
+function mcOptionButton(val, i){
+  const b = el('button','opt');
+  b.type = 'button';
+  b.innerHTML = `<span class="opt-key">${OPT_KEYS[i]}</span><span class="opt-text"></span>`;
+  b.querySelector('.opt-text').textContent = val;
+  return b;
+}
+function renderMC(card){
+  const { opts, correctVal } = buildOptions(card);
+  const optWrap = document.getElementById('options');
+  opts.forEach((val, i) => {
+    const li = document.createElement('li');
+    const b = mcOptionButton(val, i);
+    b.addEventListener('click', () => {
+      [...optWrap.querySelectorAll('.opt')].forEach(x => {
+        x.disabled = true;
+        const t = x.querySelector('.opt-text').textContent;
+        if (t === correctVal) x.classList.add('correct');
+        else if (x === b) x.classList.add('wrong');
+        else x.classList.add('dim');
+      });
+      finish(card, val === correctVal, val);
+    });
+    li.appendChild(b);
+    optWrap.appendChild(li);
+  });
+}
+
+/* ---------- CLOZE ---------- */
+function renderCloze(card){
+  const interact = document.getElementById('interact');
+  const row = el('div','cloze-row');
+  const input = el('input','cloze-input');
+  input.type = 'text'; input.placeholder = 'Type the missing term…';
+  input.autocapitalize = 'off'; input.autocomplete = 'off'; input.spellcheck = false;
+  const btn = el('button','check-btn','Check');
+  btn.type = 'button';
+  const submit = () => {
+    const guess = normalize(input.value);
+    if (!guess) return;
+    const ok = [card.b[0], ...(card.accept || [])].some(a => normalize(a) === guess);
+    input.disabled = true; btn.disabled = true;
+    input.classList.add(ok ? 'good' : 'bad');
+    finish(card, ok, input.value);
+  };
+  btn.addEventListener('click', submit);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  row.appendChild(input); row.appendChild(btn);
+  interact.appendChild(el('div','interact-hint','Free recall — no options. Type the exact term.'));
+  interact.appendChild(row);
+  setTimeout(()=>input.focus(), 50);
+}
+
+/* ---------- ORDER ---------- */
+function renderOrderType(card){
+  const interact = document.getElementById('interact');
+  interact.appendChild(el('div','interact-hint','Tap the steps in the correct order.'));
+  const picked = el('ol','order-picked');
+  const pool = el('div','order-pool');
+  const controls = el('div','interact-controls');
+  const clearB = el('button','check-btn ghost','Clear'); clearB.type='button';
+  const checkB = el('button','check-btn','Check'); checkB.type='button'; checkB.disabled = true;
+  state.ui.picks = [];
+  const shuffled = shuffle(card.items.slice());
+  // ensure the shuffle isn't accidentally the correct order
+  if (shuffled.join('|') === card.items.join('|')) shuffled.reverse();
+  const rebuild = () => {
+    picked.innerHTML = '';
+    state.ui.picks.forEach(s => picked.appendChild(el('li','',s)));
+    [...pool.children].forEach(b => { b.disabled = state.ui.picks.includes(b.textContent); });
+    checkB.disabled = state.ui.picks.length !== card.items.length;
+  };
+  shuffled.forEach(stp => {
+    const b = el('button','order-item',stp); b.type='button';
+    b.addEventListener('click', () => { if (!state.ui.picks.includes(stp)){ state.ui.picks.push(stp); rebuild(); } });
+    pool.appendChild(b);
+  });
+  clearB.addEventListener('click', () => { state.ui.picks = []; rebuild(); });
+  checkB.addEventListener('click', () => {
+    const ok = state.ui.picks.join('|') === card.items.join('|');
+    [...pool.children].forEach(b => b.disabled = true);
+    clearB.disabled = true; checkB.disabled = true;
+    picked.classList.add(ok ? 'good' : 'bad');
+    finish(card, ok, null);
+  });
+  controls.appendChild(clearB); controls.appendChild(checkB);
+  interact.appendChild(pool); interact.appendChild(picked); interact.appendChild(controls);
+}
+
+/* ---------- MATCH ---------- */
+function renderMatch(card){
+  const interact = document.getElementById('interact');
+  interact.appendChild(el('div','interact-hint','Tap a term, then tap its match.'));
+  const grid = el('div','match-grid');
+  const leftCol = el('div','match-col');
+  const rightCol = el('div','match-col');
+  const controls = el('div','interact-controls');
+  const checkB = el('button','check-btn','Check'); checkB.type='button'; checkB.disabled = true;
+  const resetB = el('button','check-btn ghost','Clear'); resetB.type='button';
+  const terms = card.pairs.map(p => p[0]);
+  const defs = shuffle(card.pairs.map(p => p[1]));
+  state.ui.sel = null;                 // selected term button
+  state.ui.assign = {};                // term -> def
+  const marks = {};                    // term -> small index label
+  const refresh = () => {
+    [...leftCol.children].forEach(b => {
+      b.classList.toggle('sel', b === state.ui.sel);
+      b.classList.toggle('paired', !!state.ui.assign[b.dataset.v]);
+    });
+    [...rightCol.children].forEach(b => {
+      const used = Object.values(state.ui.assign).includes(b.dataset.v);
+      b.classList.toggle('paired', used);
+    });
+    checkB.disabled = Object.keys(state.ui.assign).length !== terms.length;
+  };
+  terms.forEach(t => {
+    const b = el('button','match-item',t); b.type='button'; b.dataset.v = t;
+    b.addEventListener('click', () => {
+      if (state.ui.locked) return;
+      if (state.ui.assign[t]) delete state.ui.assign[t];
+      state.ui.sel = (state.ui.sel === b) ? null : b;
+      refresh();
+    });
+    leftCol.appendChild(b);
+  });
+  defs.forEach(d => {
+    const b = el('button','match-item def',d); b.type='button'; b.dataset.v = d;
+    b.addEventListener('click', () => {
+      if (state.ui.locked || !state.ui.sel) return;
+      if (Object.values(state.ui.assign).includes(d)) return;
+      state.ui.assign[state.ui.sel.dataset.v] = d;
+      state.ui.sel = null;
+      refresh();
+    });
+    rightCol.appendChild(b);
+  });
+  resetB.addEventListener('click', () => { if (!state.ui.locked){ state.ui.assign = {}; state.ui.sel = null; refresh(); } });
+  checkB.addEventListener('click', () => {
+    state.ui.locked = true;
+    let ok = true;
+    card.pairs.forEach(([t,d]) => { if (state.ui.assign[t] !== d) ok = false; });
+    [...leftCol.children, ...rightCol.children].forEach(b => b.classList.add('locked'));
+    checkB.disabled = true; resetB.disabled = true;
+    grid.classList.add(ok ? 'good' : 'bad');
+    finish(card, ok, null);
+  });
+  grid.appendChild(leftCol); grid.appendChild(rightCol);
+  controls.appendChild(resetB); controls.appendChild(checkB);
+  interact.appendChild(grid); interact.appendChild(controls);
+}
+
+/* ---------- SCENARIO ---------- */
+function renderScenario(card){
+  const interact = document.getElementById('interact');
+  interact.appendChild(el('div','interact-hint','Think through (or say aloud) your full answer, then compare with the model answer and grade yourself honestly.'));
+  const showB = el('button','check-btn','Show model answer'); showB.type='button';
+  const grade = el('div','interact-controls'); grade.style.display = 'none';
+  const gotB = el('button','check-btn good-btn','I covered the rubric'); gotB.type='button';
+  const missB = el('button','check-btn bad-btn','I missed points'); missB.type='button';
+  showB.addEventListener('click', () => {
+    document.getElementById('answerBlock').hidden = false;
+    showB.style.display = 'none';
+    grade.style.display = 'flex';
+  });
+  gotB.addEventListener('click', () => { gotB.disabled = missB.disabled = true; finish(card, true, null); });
+  missB.addEventListener('click', () => { gotB.disabled = missB.disabled = true; finish(card, false, null); });
+  grade.appendChild(missB); grade.appendChild(gotB);
+  interact.appendChild(showB); interact.appendChild(grade);
+}
+
+/* ---------- shared finish ---------- */
+function finish(card, correct, chosen){
+  const id = card.id;
+  if (state.results[id]) return;
+  document.getElementById('answerBlock').hidden = false;
+  state.total++;
+  if (correct){ state.correct++; state.streak++; if (state.streak > state.best) state.best = state.streak; }
+  else { state.streak = 0; }
+  state.results[id] = { status: correct ? 'correct' : 'wrong', chosen: chosen || null };
+  saveResults(); saveStats(); renderStats();
   const complete = answeredCount() === catCards(state.category).length;
-  if (!isReveal && val === correctVal){
-    // correct: show the explanation, then auto-advance after 3s
-    scheduleAdvance(
-      complete ? showResults : goNext,
-      ADVANCE_MS,
-      complete ? 'Correct — showing results…' : 'Correct — next question…'
-    );
+  if (correct){
+    scheduleAdvance(complete ? showResults : goNext, ADVANCE_MS,
+      complete ? 'Correct — showing results…' : 'Correct — next question…');
+  } else if (complete){
+    scheduleAdvance(showResults, ADVANCE_MS + 2000, 'Category complete — showing results…');
   }
-  // wrong or revealed answers stay on screen for review (manual Next / Score)
+}
+
+function revealCurrent(){
+  const card = currentCard();
+  if (!card || state.results[card.id]) return;
+  if (cardType(card) === 'mc'){
+    const optWrap = document.getElementById('options');
+    const correctVal = answerSide(card);
+    [...optWrap.querySelectorAll('.opt')].forEach(x => {
+      x.disabled = true;
+      if (x.querySelector('.opt-text').textContent === correctVal) x.classList.add('correct');
+      else x.classList.add('dim');
+    });
+  } else {
+    document.getElementById('interact').querySelectorAll('button,input').forEach(x => x.disabled = true);
+  }
+  document.getElementById('answerBlock').hidden = false;
+  state.results[card.id] = { status: 'revealed', chosen: null };
+  state.streak = 0;
+  saveResults(); renderStats();
 }
 
 /* ---------- auto-advance ---------- */
@@ -196,51 +394,69 @@ function showAutoAdvance(text, ms){
   document.getElementById('autoAdvanceText').textContent = text;
   banner.hidden = false;
   const bar = document.querySelector('#autoAdvanceBar i');
-  bar.style.transition = 'none';
-  bar.style.width = '100%';
-  void bar.offsetWidth;                     // reflow so the animation restarts
-  bar.style.transition = `width ${ms}ms linear`;
-  bar.style.width = '0%';
+  bar.style.transition = 'none'; bar.style.width = '100%';
+  void bar.offsetWidth;
+  bar.style.transition = `width ${ms}ms linear`; bar.style.width = '0%';
 }
 function hideAutoAdvance(){ document.getElementById('autoAdvance').hidden = true; }
 
-function revealCurrent(){
-  const id = state.order[state.index];
-  if (state.results[id]) return;
-  const correctVal = answerSide(state.byId[id]);
-  onAnswer(null, correctVal, correctVal, true);
+/* ---------- stats / tier ---------- */
+function renderStats(){
+  const cat = state.category, n = catCards(cat).length;
+  document.getElementById('statMastered').textContent = `${answeredCount()}/${n}`;
+  document.getElementById('statStreak').textContent = state.streak;
+  document.getElementById('statBest').textContent = state.best;
+  document.getElementById('statScore').textContent = `${state.correct}/${state.total}`;
+}
+function updateTier(card){
+  const tier = card.difficulty;
+  document.getElementById('levelNum').textContent = tier;
+  setDots(document.getElementById('levelBar'), tier, 5);
+  const label = isMastery(card) ? `Mastery · Q ${state.index + 1} / ${state.order.length}` : `Q ${state.index + 1} / ${state.order.length}`;
+  document.getElementById('levelHint').textContent = label;
+  if (state.lastTier !== null && tier !== state.lastTier){
+    const e = document.getElementById('level');
+    e.classList.remove('bump'); void e.offsetWidth; e.classList.add('bump');
+    setTimeout(() => e.classList.remove('bump'), 600);
+  }
+  state.lastTier = tier;
 }
 
 /* ---------- navigation ---------- */
 function goNext(){
-  if (state.index < state.order.length - 1){ renderCard(state.order[state.index + 1]); }
-  else { showResults(); }
+  if (state.index < state.order.length - 1) renderCard(state.order[state.index + 1]);
+  else showResults();
 }
 function goPrev(){ if (state.index > 0) renderCard(state.order[state.index - 1]); }
-function toggleDirection(){ state.direction = (state.direction === 'AB') ? 'BA' : 'AB'; renderCard(state.order[state.index]); }
+function toggleDirection(){
+  const card = currentCard();
+  if (card && isMastery(card)) return;
+  state.direction = (state.direction === 'AB') ? 'BA' : 'AB';
+  renderCard(state.order[state.index]);
+}
 function jumpNextUnanswered(){
   for (let k=1;k<=state.order.length;k++){
     const idx = (state.index + k) % state.order.length;
     if (!state.results[state.order[idx]]){ renderCard(state.order[idx]); return; }
   }
-  showResults(); // none left
+  showResults();
 }
 
 /* ---------- results & weakness prompt ---------- */
 function domainStats(){
   const cat = state.category;
-  const map = {}; // domain -> {correct, total}
+  const map = {};
   catCards(cat).forEach(card => {
     const d = card.domain;
     if (!map[d]) map[d] = { correct:0, total:0, missed:[] };
     map[d].total++;
     const r = state.results[card.id];
     if (r && r.status === 'correct') map[d].correct++;
-    else if (r) map[d].missed.push(card.concept.replace(/^.*?—\s*/, ''));
-    else map[d].missed.push(card.concept.replace(/^.*?—\s*/, '')); // unanswered = missed
+    else map[d].missed.push(card.concept.replace(/^.*?—\s*/, '') + (isMastery(card) ? ` [${TYPE_LABELS[cardType(card)]}]` : ''));
   });
   return map;
 }
+function domNum(d){ const m=/^Domain (\d+)/.exec(d); return m?+m[1]:99; }
 
 function buildWeakPrompt(map){
   const cat = state.category;
@@ -261,10 +477,9 @@ function buildWeakPrompt(map){
     lines.push(`- ${d}${miss ? ` — missed: ${miss}` : ''}`);
   });
   lines.push('');
-  lines.push(`Please generate 15 new exam-style multiple-choice questions concentrated on the sections above for the "${cat}" category, following the existing card schema (id, category "${cat}", difficulty 1-5, domain, concept, a, b, notes, tags), each labeled with its exam domain, ordered easiest to hardest, with answers distinct within the category. Add them to claude_certs/cards.json, then commit and deploy.`);
+  lines.push(`Please generate 15 new practice items concentrated on the sections above for the "${cat}" category — a mix of multiple-choice (with hand-crafted plausible distractors in the "distractors" field) and mastery formats (cloze, order, match, scenario), following the existing card schema, each labeled with its exam domain, ordered easiest to hardest, with answers distinct within the category. Add them to claude_certs/cards.json, then commit and deploy.`);
   return lines.join('\n');
 }
-function domNum(d){ const m=/^Domain (\d+)/.exec(d); return m?+m[1]:99; }
 
 function showResults(){
   clearAdvance();
@@ -273,26 +488,19 @@ function showResults(){
   const totalCorrect = Object.values(map).reduce((a,s)=>a+s.correct,0);
   const totalQ = Object.values(map).reduce((a,s)=>a+s.total,0);
   const pct = Math.round(100*totalCorrect/totalQ);
-
   document.getElementById('resultTitle').textContent = `${CAT_LABELS[cat]} — Results`;
   document.getElementById('resultOverall').textContent =
-    `Overall: ${totalCorrect}/${totalQ} (${pct}%)${answeredCount() < totalQ ? ' · some questions unanswered (counted as missed)' : ''}`;
-
+    `Overall: ${totalCorrect}/${totalQ} (${pct}%)${answeredCount() < totalQ ? ' · unanswered questions count as missed' : ''}`;
   const rowsEl = document.getElementById('resultRows');
   rowsEl.innerHTML = '';
   Object.entries(map).sort((a,b)=>domNum(a[0])-domNum(b[0])).forEach(([d,s]) => {
     const p = Math.round(100*s.correct/s.total);
     const weak = (s.correct/s.total) < WEAK_THRESHOLD;
-    const row = document.createElement('div');
-    row.className = 'res-row' + (weak ? ' weak' : '');
-    row.innerHTML =
-      `<span class="res-dom"></span>` +
-      `<span class="res-bar"><i style="width:${p}%"></i></span>` +
-      `<span class="res-score">${s.correct}/${s.total} · ${p}%</span>`;
+    const row = el('div','res-row' + (weak ? ' weak' : ''));
+    row.innerHTML = `<span class="res-dom"></span><span class="res-bar"><i style="width:${p}%"></i></span><span class="res-score">${s.correct}/${s.total} · ${p}%</span>`;
     row.querySelector('.res-dom').textContent = d;
     rowsEl.appendChild(row);
   });
-
   document.getElementById('weakPrompt').value = buildWeakPrompt(map);
   document.getElementById('completeOverlay').hidden = false;
 }
@@ -308,7 +516,6 @@ function copyPrompt(){
 function restartCategory(){
   state.results = {};
   saveResults();
-  state.index = 0;
   closeOverlay();
   renderCard(state.order[0]);
 }
@@ -334,7 +541,6 @@ function switchCategory(cat){
   state.lastTier = null;
   document.getElementById('catSelect').value = cat;
   buildOrder(cat);
-  // resume at first unanswered, else start at 0
   let start = state.order.findIndex(id => !state.results[id]);
   if (start < 0) start = 0;
   renderCard(state.order[start]);
