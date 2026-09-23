@@ -34,15 +34,14 @@
       <span class="stat"><b id="statMastered">0/0</b><span>answered</span></span>
       <span class="stat"><b id="statStreak">0</b><span>streak</span></span>
       <span class="stat"><b id="statBest">0</b><span>best</span></span>
-      <span class="stat"><b id="statScore">0/0</b><span>correct</span></span>
     </div>
     <div class="level" id="level" title="Current question difficulty tier">
       <span class="level-label">Tier <b id="levelNum">1</b></span>
       <span class="level-bar" id="levelBar" aria-hidden="true"></span>
       <span class="level-hint" id="levelHint">Q 1 / 50</span>
     </div>
-    <button class="link-btn" id="resultsBtn" type="button">Score</button>
-    <button class="link-btn" id="resetBtn" type="button">Reset</button>
+    <button class="link-btn" id="resultsBtn" type="button">Grade</button>
+    <button class="link-btn" id="resetBtn" type="button">Restart</button>
   </div>
 
   <!-- CARD STAGE (~80% of viewport) -->
@@ -89,6 +88,11 @@
   <div class="overlay" id="completeOverlay" hidden>
     <div class="overlay-card results-card">
       <h2 class="overlay-title" id="resultTitle">Results</h2>
+      <div class="final-grade" id="finalGrade">
+        <span class="fg-score" id="fgScore">&mdash;</span>
+        <span class="fg-pct" id="fgPct">&mdash;</span>
+        <span class="fg-label" id="fgLabel">correct</span>
+      </div>
       <p class="overlay-text" id="resultOverall">&mdash;</p>
       <div class="results" id="resultRows"></div>
       <div class="prompt-box">

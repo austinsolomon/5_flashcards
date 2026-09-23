@@ -126,11 +126,29 @@ body{
   border:1px solid var(--line-strong);border-radius:4px;margin-top:1px;
 }
 .opt[disabled]{cursor:default;}
-.opt.correct{background:var(--correct-bg);border-color:var(--correct);color:var(--ink);}
-.opt.correct .opt-key{border-color:var(--correct);color:var(--correct);}
-.opt.wrong{background:var(--wrong-bg);border-color:var(--wrong);color:var(--ink);}
-.opt.wrong .opt-key{border-color:var(--wrong);color:var(--wrong);}
-.opt.dim{opacity:.55;}
+/* Correct answer: bold green highlight + a "CORRECT" badge, so a miss
+   never looks like an accident. */
+.opt.correct{
+  background:var(--correct-bg);border:2px solid var(--correct);color:var(--ink);
+  font-weight:600;padding:10px 12px;
+}
+.opt.correct .opt-key{border-color:var(--correct);color:#fff;background:var(--correct);}
+.opt.correct::after{
+  content:'✓ CORRECT';margin-left:auto;flex:0 0 auto;align-self:center;
+  font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.6px;
+  color:#fff;background:var(--correct);border-radius:5px;padding:3px 7px;
+}
+/* Your wrong pick: red highlight + a "YOUR ANSWER" badge. */
+.opt.wrong{
+  background:var(--wrong-bg);border:2px solid var(--wrong);color:var(--ink);padding:10px 12px;
+}
+.opt.wrong .opt-key{border-color:var(--wrong);color:#fff;background:var(--wrong);}
+.opt.wrong::after{
+  content:'✗ YOUR ANSWER';margin-left:auto;flex:0 0 auto;align-self:center;
+  font-family:var(--sans);font-size:10px;font-weight:700;letter-spacing:.6px;
+  color:#fff;background:var(--wrong);border-radius:5px;padding:3px 7px;
+}
+.opt.dim{opacity:.5;}
 
 /* ---------- ANSWER PANEL ---------- */
 .answer{
@@ -184,6 +202,21 @@ body{
 .overlay-title{
   font-family:var(--serif);font-weight:700;font-size:22px;margin:0 0 8px;color:var(--ink);
 }
+/* Big final grade — the only place the score is revealed. */
+.final-grade{
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  margin:4px 0 16px;padding:16px 12px;border-radius:12px;
+  border:2px solid var(--line-strong);background:var(--surface-2);
+}
+.final-grade.pass{border-color:var(--correct);background:var(--correct-bg);}
+.final-grade.mid{border-color:#b8862f;background:#f5ecda;}
+.final-grade.fail{border-color:var(--wrong);background:var(--wrong-bg);}
+.fg-score{font-family:var(--serif);font-weight:700;font-size:38px;line-height:1;color:var(--ink);}
+.fg-pct{font-family:var(--serif);font-weight:600;font-size:17px;color:var(--muted);margin-top:3px;}
+.final-grade.pass .fg-pct{color:var(--correct);}
+.final-grade.mid .fg-pct{color:#8a6316;}
+.final-grade.fail .fg-pct{color:var(--wrong);}
+.fg-label{font-family:var(--sans);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-top:4px;}
 .overlay-text{font-size:13.5px;line-height:1.5;color:var(--muted);margin:0 0 20px;}
 .overlay-actions{display:flex;gap:9px;justify-content:center;}
 .overlay-btn{
