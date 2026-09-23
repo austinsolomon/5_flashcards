@@ -1,13 +1,17 @@
 /* Claude Certifications — Exam Prep — service worker */
-const CACHE = 'claude-certs-v4';
+const CACHE = 'claude-certs-v5';
 const STATIC_ASSETS = [
   './',
   './index.html',
   './styles.css',
+  './fonts.css',
   './app.js',
+  './cards.json',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './fonts/inter.woff2',
+  './fonts/source-serif-4.woff2',
 ];
 
 self.addEventListener('install', (event) => {
