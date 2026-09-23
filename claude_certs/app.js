@@ -406,7 +406,10 @@ function renderStats(){
   document.getElementById('statMastered').textContent = `${answeredCount()}/${n}`;
   document.getElementById('statStreak').textContent = state.streak;
   document.getElementById('statBest').textContent = state.best;
-  document.getElementById('statScore').textContent = `${state.correct}/${state.total}`;
+  // Running correct/total is intentionally NOT shown — final grade appears
+  // only at the end (see showResults). Guarded in case the element is absent.
+  const sc = document.getElementById('statScore');
+  if (sc) sc.textContent = `${state.correct}/${state.total}`;
 }
 function updateTier(card){
   const tier = card.difficulty;
@@ -489,8 +492,14 @@ function showResults(){
   const totalQ = Object.values(map).reduce((a,s)=>a+s.total,0);
   const pct = Math.round(100*totalCorrect/totalQ);
   document.getElementById('resultTitle').textContent = `${CAT_LABELS[cat]} — Results`;
+  // Big, prominent final grade (only revealed here, not during the quiz).
+  document.getElementById('fgScore').textContent = `${totalCorrect} / ${totalQ}`;
+  document.getElementById('fgPct').textContent = `${pct}%`;
+  const fg = document.getElementById('finalGrade');
+  fg.classList.remove('pass', 'mid', 'fail');
+  fg.classList.add(pct >= 80 ? 'pass' : pct >= 60 ? 'mid' : 'fail');
   document.getElementById('resultOverall').textContent =
-    `Overall: ${totalCorrect}/${totalQ} (${pct}%)${answeredCount() < totalQ ? ' · unanswered questions count as missed' : ''}`;
+    `${answeredCount() < totalQ ? 'Unanswered questions count as missed. ' : ''}Section breakdown:`;
   const rowsEl = document.getElementById('resultRows');
   rowsEl.innerHTML = '';
   Object.entries(map).sort((a,b)=>domNum(a[0])-domNum(b[0])).forEach(([d,s]) => {
@@ -548,9 +557,12 @@ function switchCategory(cat){
 
 /* ---------- reset ---------- */
 function resetAll(){
+  if (!confirm('Clear ALL answers and scores across every category and start over from question 1?')) return;
   localStorage.removeItem(LS_RESULTS);
+  localStorage.removeItem(LS_STATS);
   state.results = {}; state.streak = 0; state.best = 0; state.correct = 0; state.total = 0; state.lastTier = null;
   saveStats();
+  closeOverlay();
   switchCategory(state.category);
 }
 

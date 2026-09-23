@@ -1,5 +1,5 @@
 /* Claude Certifications — Exam Prep — service worker */
-const CACHE = 'claude-certs-v5';
+const CACHE = 'claude-certs-v6';
 const STATIC_ASSETS = [
   './',
   './index.html',
